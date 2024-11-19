@@ -20,6 +20,10 @@ add_compile_options(-Wall -Werror -Wextra)
 # Define source files
 set(SRC_FILES 
     src/Value.cpp
+    src/ValueImpl.cpp
+    src/Neuron.cpp
+    src/Layer.cpp
+    src/MLP.cpp
     )
 
 # Add the library target
@@ -39,6 +43,8 @@ enable_testing()
 # Add the test executable
 add_executable(CarPPathyTest 
     tests/Value_test.cpp
+    tests/Neuron_test.cpp
+    tests/MLP_test.cpp
     )
 
 

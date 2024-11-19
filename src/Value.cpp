@@ -17,7 +17,9 @@
 #include "Value.hpp"
 #include <cmath>
 #include <cstddef>
+#include <exception>
 #include <fstream>
+#include <gtest/gtest.h>
 #include <iostream>
 #include <memory>
 #include <set>
@@ -30,182 +32,183 @@ namespace cppty
 {
 
 Value::Value(double data, const std::string& label)
-    : data(data)
-    , label(label)
 {
-    backward = [] {};
+    m_value = std::make_shared<ValueImpl>(data, label);
 }
 
-Value Value::operator+(const Value& other)
+Value::Value(
+    double data,
+    const std::vector<std::shared_ptr<ValueImpl>>& previous,
+    OperationType type,
+    const std::string& label)
 {
-    Value val = data + other.data;
-    val.label = label + "+" + other.label;
-    val.type = OperationType::Addition;
-    val.previous.emplace_back(std::move(*this));
-    val.previous.emplace_back(other);
-
-    return val;
+    m_value = std::make_shared<ValueImpl>(data, previous, type, label);
 }
 
-Value Value::operator*(const Value& other)
+Value::Value(const ValueImpl& val)
 {
-    Value val = data * other.data;
-    val.label = label + "*" + other.label;
-    val.type = OperationType::Multiplication;
-    val.previous.emplace_back(std::move(*this));
-    val.previous.emplace_back(other);
-
-    return val;
+    m_value = std::make_shared<ValueImpl>(val);
 }
 
-void Value::backpropagate()
+Value Value::operator+(const Value& other) const
 {
-    double t = 0;
-    switch (type)
-    {
-    case Addition:
-        previous.at(0).grad = 1 * grad;
-        previous.at(1).grad = 1 * grad;
-        return;
-    case Multiplication:
-        previous.at(0).grad = previous.at(1).data * grad;
-        previous.at(1).grad = previous.at(0).data * grad;
-        return;
-    case Tanh:
-        t = (std::exp(2 * previous.at(0).data) - 1) / (std::exp(2 * previous.at(0).data) + 1);
-        previous.at(0).grad = (1 - std::pow(t, 2)) * grad;
-        return;
-    case None:
-    default:
-        return;
-    }
+    return Value(ValueImpl{ m_value->getData() + other.m_value->getData(),
+                            { m_value, other.m_value },
+                            OperationType::Addition,
+                            m_value->getLabel() + "+" + other.m_value->getLabel() });
 }
 
-std::string Value::op() const
+Value Value::operator-(const Value& other) const
 {
-    switch (type)
-    {
-    case Addition:
-        return "+";
-    case Multiplication:
-        return "*";
-    case Tanh:
-        return "tanh";
-    case None:
-    default:
-        return "";
-    }
+    auto negatedOther = other * (-1);
+    return *this + negatedOther;
+}
+
+Value Value::operator*(const Value& other) const
+{
+    return Value(ValueImpl{ m_value->getData() * other.m_value->getData(),
+                            { m_value, other.m_value },
+                            OperationType::Multiplication,
+                            m_value->getLabel() + "*" + other.m_value->getLabel() });
+}
+
+Value Value::operator/(const Value& other) const
+{
+    auto otherPowMinusOne = other.pow(-1);
+    return *this * otherPowMinusOne;
+}
+
+Value Value::pow(double i) const
+{
+    std::ostringstream stream;
+    stream << i;
+    const auto& n = m_value->getData();
+    auto t = std::pow(n, i);
+    auto ret = ValueImpl(t, { m_value }, Pow, m_value->getLabel() + ".pow(" + stream.str() + ")");
+    ret.storePower(i);
+    return ret;
 }
 
 Value Value::tanh()
 {
-    const auto& n = data;
+
+    const auto& n = m_value->getData();
     auto t = (std::exp(2 * n) - 1) / (std::exp(2 * n) + 1);
-    auto ret = Value(t, label + ".tanh()");
-    ret.type = Tanh;
-    ret.previous.emplace_back(std::move(*this));
-    ret.backward = [&ret, t] { ret.previous.at(0).grad = (1 - std::pow(t, 2)) * ret.grad; };
+    auto ret = ValueImpl(t, { m_value }, Tanh, m_value->getLabel() + ".tanh()");
     return ret;
 }
 
-// Helper function to trace the computational graph
-void traceGraph(Value& root, std::set<Value*>& nodes, std::set<std::pair<Value*, Value*>>& edges)
+Value Value::exp()
 {
-    if (nodes.find(&root) != nodes.end())
-        return;
+    const auto& n = m_value->getData();
+    auto t = std::exp(n);
+    auto ret = ValueImpl(t, { m_value }, Exp, m_value->getLabel() + ".exp()");
+    return ret;
+}
 
-    nodes.insert(&root);
-    if (root.prevSize())
+void Value::setLabel(const std::string& newLabel)
+{
+    m_value->setLabel(newLabel);
+}
+
+void Value::setGrad(double grad)
+{
+    m_value->setGrad(grad);
+}
+
+void Value::backpropagate()
+{
+    if (!m_value)
     {
-        edges.emplace(&root.getLeft(), &root);
-        traceGraph(root.getLeft(), nodes, edges);
+        return; // Should throw or something here
     }
-
-    if (root.prevSize() > 1)
+    m_value->setGrad(1); // Edge case
+    auto topo = buildTopographic(m_value);
+    for (auto i = topo.rbegin(); i != topo.rend(); i++)
     {
-        edges.emplace(&root.getRight(), &root);
-        traceGraph(root.getRight(), nodes, edges);
+        if (!*i)
+        {
+            return;
+        }
+        (*i)->backpropagate();
     }
 }
 
-// Function to export the graph as a DOT file
-void exportDot(Value& root, const std::string& filename, const std::string& rankdir)
+void Value::drawDotFile(const std::string& filename)
 {
-    std::set<Value*> nodes;
-    std::set<std::pair<Value*, Value*>> edges;
-
-    traceGraph(root, nodes, edges);
-
-    std::ofstream dotFile(filename);
-
-    if (!dotFile.is_open())
-    {
-        std::cerr << "Error: Could not open file for writing: " << filename << std::endl;
-        return;
-    }
-
-    dotFile << "digraph G {" << std::endl;
-    dotFile << "rankdir=" << rankdir << ";" << std::endl;
-
-    std::unordered_map<const Value*, std::string> nodeIds;
-
-    // Generate nodes
-    for (const auto& node : nodes)
-    {
-        const std::string& nodeId = node->getLabel();
-        nodeIds[node] = nodeId;
-
-        dotFile << "\"" << nodeId << "\" [label=\"{ " << nodeId << "| data " << node->getData() << " | grad "
-                << node->getGrad() << " }\", shape=record];" << std::endl;
-
-        if (!node->op().empty())
-        {
-            std::string opNodeId = nodeId + "_op";
-            dotFile << "\"" << opNodeId << "\" [label=\"" << node->op() << "\"];" << std::endl;
-            dotFile << "\"" << opNodeId << "\" -> \"" << nodeId << "\";" << std::endl;
-        }
-    }
-
-    // Generate edges
-    for (const auto& edge : edges)
-    {
-        auto n1 = edge.first;
-        auto n2 = edge.second;
-
-        std::string opNodeId = nodeIds[n2] + "_op";
-        if (!nodeIds[n1].empty())
-            dotFile << "\"" << nodeIds[n1] << "\" -> \"" << opNodeId << "\";" << std::endl;
-    }
-
-    dotFile << "}" << std::endl;
-
-    dotFile.close();
-    std::cout << "Graph exported to " << filename << std::endl;
+    exportDot(m_value, filename);
 }
 
-std::vector<Value*> buildTopographic(Value& root)
+double Value::data()
 {
-    std::vector<Value*> topo;
-    std::set<const Value*> visited;
-    std::function<void(Value & root)> build;
-    build = [&topo, &visited, &build](Value& root)
+    if (!m_value)
     {
-        if (!visited.contains(&root))
-        {
-            visited.emplace(&root);
-            if (root.prevSize())
-            {
-                build(root.getLeft());
-            }
-            if (root.prevSize() > 1)
-            {
-                build(root.getRight());
-            }
-            topo.emplace_back(&root);
-        }
-    };
-    build(root);
-    return topo;
+        std::cout << "No underlying value" << std::endl;
+        throw std::exception{};
+    }
+    return m_value->getData();
+}
+
+double Value::grad()
+{
+    if (!m_value)
+    {
+        std::cout << "No underlying value" << std::endl;
+        throw std::exception{};
+    }
+    return m_value->getGrad();
+}
+
+Value operator+(double lhs, const Value& rhs)
+{
+    std::ostringstream stream;
+    stream << lhs;
+    return Value(lhs, stream.str()) + rhs;
+}
+Value operator+(const Value& lhs, double rhs)
+{
+    std::ostringstream stream;
+    stream << rhs;
+    return lhs + Value(rhs, stream.str());
+}
+
+Value operator*(double lhs, const Value& rhs)
+{
+    std::ostringstream stream;
+    stream << lhs;
+    return Value(lhs, stream.str()) * rhs;
+}
+Value operator*(const Value& lhs, double rhs)
+{
+    std::ostringstream stream;
+    stream << rhs;
+    return lhs * Value(rhs, stream.str());
+}
+
+Value operator/(double lhs, const Value& rhs)
+{
+    std::ostringstream stream;
+    stream << lhs;
+    return Value(lhs, stream.str()) / rhs;
+}
+Value operator/(const Value& lhs, double rhs)
+{
+    std::ostringstream stream;
+    stream << rhs;
+    return lhs / Value(rhs, stream.str());
+}
+
+Value operator-(double lhs, const Value& rhs)
+{
+    std::ostringstream stream;
+    stream << lhs;
+    return Value(lhs, stream.str()) - rhs;
+}
+Value operator-(const Value& lhs, double rhs)
+{
+    std::ostringstream stream;
+    stream << rhs;
+    return lhs - Value(rhs, stream.str());
 }
 
 } // namespace cppty

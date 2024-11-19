@@ -16,8 +16,10 @@
 
 #pragma once
 
-#include <functional>
-#include <iostream>
+#include "ValueImpl.hpp"
+
+#include <cmath>
+#include <complex>
 #include <memory>
 #include <vector>
 
@@ -26,53 +28,47 @@ namespace cppty
 
 class Value
 {
-
 public:
-    Value(double data, const std::string& label = "unlabelled");
-    Value operator+(const Value& other);
-    Value operator*(const Value& other);
+    Value(double data, const std::string& label);
+    Value(
+        double data,
+        const std::vector<std::shared_ptr<ValueImpl>>& previous,
+        OperationType type,
+        const std::string& label);
+    Value(const ValueImpl& val);
 
-    const std::string& getLabel() const { return label; }
-    Value& getLeft() { return previous.at(0); }
-    Value& getRight() { return previous.at(1); }
-    void setLabel(const std::string& newLabel) { label = newLabel; };
-    double getData() const { return data; }
-    double getGrad() const { return grad; }
-    std::string op() const;
-    void setGrad(double newGrad) { grad = newGrad; };
+    Value operator+(const Value& other) const;
+    Value operator-(const Value& other) const;
+    Value operator*(const Value& other) const;
+    Value operator/(const Value& other) const;
 
+    Value pow(double i) const;
+    Value tanh();
+    Value exp();
+
+    void setLabel(const std::string& newLabel);
+    void setGrad(double grad);
     void backpropagate();
 
-    Value tanh();
+    void drawDotFile(const std::string& filename);
 
-    size_t prevSize() const { return previous.size(); }
+    double data();
+    double grad();
 
 private:
-    double data;
-    std::string label;
-    double grad = 0.0;
-
-    std::function<void(void)> backward;
-
-    std::vector<Value> previous;
-    // std::unique_ptr<Value> left;
-    // std::unique_ptr<Value> right;
-
-    enum OperationType
-    {
-        None,
-        Addition,
-        Multiplication,
-        Tanh
-    };
-    OperationType type = OperationType::None;
-
-    void tanhBackward();
-    void additionBackward();
-    void multiplicationBackward();
+    std::shared_ptr<ValueImpl> m_value;
 };
 
-void exportDot(Value& root, const std::string& filename, const std::string& rankdir = "LR");
+Value operator+(double lhs, const Value& rhs);
+Value operator+(const Value& lhs, double rhs);
 
-std::vector<Value*> buildTopographic(Value& root);
+Value operator*(double lhs, const Value& rhs);
+Value operator*(const Value& lhs, double rhs);
+
+Value operator/(double lhs, const Value& rhs);
+Value operator/(const Value& lhs, double rhs);
+
+Value operator-(double lhs, const Value& rhs);
+Value operator-(const Value& lhs, double rhs);
+
 } // namespace cppty

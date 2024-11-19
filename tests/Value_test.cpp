@@ -19,7 +19,6 @@
 #include <cmath>
 
 #include <gtest/gtest.h>
-#include <memory>
 
 using namespace cppty;
 
@@ -40,7 +39,7 @@ TEST_F(ValueTest, CarPPAthyCompiles)
     auto L = d * f;
     L.setLabel("L");
 
-    exportDot(L, "visualize_graph.dot");
+    L.drawDotFile("visualize_graph.dot");
 
     ASSERT_TRUE(false);
 }
@@ -63,22 +62,59 @@ TEST_F(ValueTest, Neuron)
     auto n = x1w1x2w2 + b;
     n.setLabel("n");
 
-    auto o = n.tanh();
+    // // Decompose tanh
+    // auto o = n.tanh();
+    // //
+    auto e = (2 * n).exp();
+    e.setLabel("e");
+    auto o = (e - 1) / (e + 1);
     o.setLabel("o");
 
     o.setGrad(1);
 
-    auto topo = buildTopographic(o);
-    for (auto i = topo.rbegin(); i != topo.rend(); i++)
-    {
-        if (!*i)
-        {
-            return;
-        }
-        (*i)->backpropagate();
-    }
+    o.backpropagate();
 
-    exportDot(o, "visualize_graph.dot");
+    o.drawDotFile("visualize_graph.dot");
 
     ASSERT_TRUE(false);
+}
+
+TEST_F(ValueTest, SameValueGradient)
+{
+    auto a = Value(-2.0, "a");
+    auto b = Value(3.0, "b");
+    auto d = a * b;
+    d.setLabel("d");
+    auto e = a + b;
+    e.setLabel("e");
+    auto f = d * e;
+    f.setLabel("f");
+    f.backpropagate();
+    f.drawDotFile("SingleValueGradient.dot");
+    EXPECT_EQ(a.grad(), -3);
+    EXPECT_EQ(b.grad(), -8);
+}
+
+TEST_F(ValueTest, Operators)
+{
+    auto a = Value(2.0, "a");
+    auto c = a + 1;
+    c.setLabel("c");
+    EXPECT_EQ(c.data(), 3);
+    auto d = 3 * c;
+    EXPECT_EQ(d.data(), 9);
+    d.setLabel("d");
+    auto e = d.exp();
+    e.setLabel("e");
+    e.drawDotFile("Operators.dot");
+
+    auto b = a * 2;
+    b.setLabel("b");
+    auto f = a / b;
+    f.setLabel("f");
+    f.drawDotFile("Division.dot");
+
+    auto g = 1 - f;
+    g.setLabel("g");
+    g.drawDotFile("Subtraction.dot");
 }
